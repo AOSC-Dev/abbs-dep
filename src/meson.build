@@ -14,4 +14,3 @@ executable('abbs-dep', abbs_dep_sources,
   install: true,
 )
 
-executable('toposort-test', ['toposort.c'])

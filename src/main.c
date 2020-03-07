@@ -26,12 +26,12 @@
 
 #include "vercomp.h"
 
+#define EXIT_CIRCULAR 2
+
 #define PKG_VISITED 1
 #define PKG_BUILDDEP 2
 #define PKG_NOT_FOUND 4
-#define PKG_NOT_AVAIL 8
-#define PKG_DEP_NOT_MET 16
-#define PKG_DEP_CIRCULAR 32
+#define PKG_DEP_NOT_MET 8
 
 typedef struct {
     int depth;
@@ -77,10 +77,14 @@ static const char *sql_dep = (
     "AND (pv.architecture='') != (pv.architecture=?2) "
     "LEFT JOIN packages p ON p.name=pv.package "
     "LEFT JOIN trees t ON t.name=p.tree "
+    "LEFT JOIN dpkg_packages dp ON dp.package=pd.dependency "
+    "AND dp.architecture=?2 AND compare_dpkgrel( "
+    "  dpkg_version(pv.version, pv.release, pv.epoch), '=', dp.version) "
     "WHERE pd.package=?1 AND pd.dependency!=?1 "
     "AND pd.relationship IN ('PKGDEP', ?3) "
     "AND (pd.architecture='') != (pd.architecture=?2) "
-    "AND (pv.package IS NULL OR pv.branch=t.mainbranch)"
+    "AND (pv.package IS NULL OR pv.branch=t.mainbranch) "
+    "AND dp.package IS NULL"
 );
 
 static db_ctx init_db(char *filename) {
@@ -267,7 +271,6 @@ gint main(gint argc, gchar *argv[]) {
     g_autoptr(GError) error = NULL;
     gboolean version = FALSE;
     gchar *arch = "amd64";
-    gboolean apt_check = FALSE;
     gboolean verbose = FALSE;
     gboolean builddep = TRUE;
     gchar *dbfile = NULL;
@@ -276,8 +279,6 @@ gint main(gint argc, gchar *argv[]) {
             "Show program version", NULL},
         {"arch", 'a', 0, G_OPTION_ARG_STRING, &arch,
             "Set architecture to look up, default 'amd64'", NULL},
-        {"apt", 0, 0, G_OPTION_ARG_NONE, &apt_check,
-            "Check package availability in apt sources", NULL},
         {"no-builddep", 'n', G_OPTION_FLAG_REVERSE, G_OPTION_ARG_NONE, &builddep,
             "Don't include BUILDDEP", NULL},
         {"verbose", 'v', 0, G_OPTION_ARG_NONE, &verbose,
@@ -288,7 +289,14 @@ gint main(gint argc, gchar *argv[]) {
     };
 
     context = g_option_context_new("package...");
-    g_option_context_set_summary(context, "Resolve dependencies for abbs trees.");
+    g_option_context_set_summary(
+        context,
+        "Resolve dependencies for abbs trees.\n\n"
+        "This tool is intended for use with abbs.db database file \n"
+        "generated from a `abbs-meta` local scan and `dpkgrepo.py`\n"
+        "sync with appropriate sources.list.\n\n"
+        "Exit status 2 indicates that there is a dependency loop."
+    );
     g_option_context_add_main_entries(context, main_entries, NULL);
 
     if (!g_option_context_parse(context, &argc, &argv, &error)) {
@@ -341,5 +349,6 @@ gint main(gint argc, gchar *argv[]) {
             puts("");
         }
     }
+    if (loops->len) {return EXIT_CIRCULAR;}
     return EXIT_SUCCESS;
 }
